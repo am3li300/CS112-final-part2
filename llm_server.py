@@ -23,17 +23,30 @@ if __name__ == '__main__':
 
     llm = LLMProxy()
 
+    # client_sock = socket.accept
+
     while True:
         """
-        possibly also use select unfortunately
-        maintain a client list
+        will only have one client
+        but has to serve responses for multiple profiles
+        in proxy we can inject http header to have profile info and client id, 
+        maybe we can also inject with a feedback line if client is like too many words bolded or smthn like that
 
-        read/write clients
-            take in webpage/hello message w profile info?, modify it, write it back
+        socket.read
+        figure out python way to parse http message this must be way easier surely
+        note that everything you read will be 200 OK webpages
 
-        accept new clients
+        if complete message, parse out profile info
+        feed body to llm using profile parameters
+        if feedback header, modify prompt/make it so all future stuff for this profile has this change
+            /if we are doing predetermined options for feedback have a majority win system
+            where the majority determines the prompt modification
+        get back augmented webpage
+
+        socket.write to client
+
+        i have no idea how we are going to get interactive info from client in the proxy though
+
+        
+        in the proxy, when you accept new clients, immediately send back some kind of loading page
         """
-    
-
-
-    # listen on a port
