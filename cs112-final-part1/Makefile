@@ -1,4 +1,4 @@
-LLHTTP_DIR = ./llhttp
+LLHTTP_DIR = ../../llhttp
 OPENSSL_CFLAGS := $(shell pkg-config --cflags openssl)
 OPENSSL_LIBS   := $(shell pkg-config --libs openssl)
 src = $(wildcard *.c) \
