@@ -132,7 +132,7 @@ int on_chunk_header(llhttp_t *parser) {
 
     int chunk_header_size = (sizeof(int) * 2) + 3; // want a char per 4 bits + CRLF + '\0'
     char chunk_header[chunk_header_size];
-    assert(snprintf(chunk_header, chunk_header_size, "%X\r\n", parser->content_length) != 0);
+    assert(snprintf(chunk_header, chunk_header_size, "%X\r\n", (unsigned int)parser->content_length) != 0);
 
     chunk_header_size = strlen(chunk_header);
 
@@ -452,6 +452,20 @@ bool Http_Msg_has(http_message_t *msg, char *field, char *value)
     }
 
     return false;
+}
+
+char *Http_Msg_get_value(http_message_t *msg, char *field)
+{
+    assert(msg != NULL);
+    assert(field != NULL);
+
+    for (int i = 0; i < msg->num_headers; i++) {
+        if (strcasecmp(msg->headers[i].field, field) == 0) {
+            return msg->headers[i].value;
+        }
+    }
+
+    return NULL;
 }
 
 /* caller responsible for freeing hostname */

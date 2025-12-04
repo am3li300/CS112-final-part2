@@ -248,15 +248,19 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
                 Buffer response = assemble_http_message(msg);
 
                 assert(fwrite("READ FROM LLM SERVER\n", 1, strlen("READ FROM LLM SERVER\n"), f) != 0);
-                assert(fwrite(Buffer_content(request), 1, Buffer_size(request), f) != 0);
+                assert(fwrite(Buffer_content(response), 1, Buffer_size(response), f) != 0);
                 assert(fwrite("\n\n", 1, 2, f) != 0);
                 fflush(f);
 
-                char *id_str = Http_Msg_get_field(msg, ID_FIELD);
+                char *id_str = Http_Msg_get_value(msg, ID_FIELD);
+                if (id_str == NULL) {
+                    printf("No ID field in header\n");
+                    return PARTIAL;
+                }
                 int id = strtol(id_str, NULL, 10);
                 Conn client = NULL;
                 for (int i = 0; i < traffic->length; i++) {
-                    if (traffic->data[i]->id == id) {
+                    if (((Conn)traffic->data[i])->id == id) {
                         client = traffic->data[i];
                         break;
                     }
@@ -379,8 +383,9 @@ int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f, Con
         else if (res == DONE) {
             http_message_t *msg = Party_get_read(server);
             inject_http_header(msg, "X-Proxy", "CS112");
-            char buf[10];
-            inject_http_header(msg, ID_FIELD, snprintf(buf, 10, "%d", conn->id));
+            char buf[12];
+            snprintf(buf, 12, "%d", conn->id);
+            inject_http_header(msg, ID_FIELD, buf);
 
             Buffer response = assemble_http_message(msg);
 

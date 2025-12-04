@@ -133,7 +133,7 @@ void disconnect(Pool pool, Conn conn)
 
 void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx, 
                         SSL_CTX *as_client_ctx, X509 *CA_cert, EVP_PKEY *CA_pkey, 
-                        EVP_PKEY_CTX *pkey_ctx, struct timespec *ts, FILE *f, int LLM_fd)
+                        EVP_PKEY_CTX *pkey_ctx, struct timespec *ts, FILE *f)
 {
     int size = traffic->length;
     fd_set *read_fds = Pool_read_fds(pool);
@@ -150,7 +150,11 @@ void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx,
             res = Conn_client_read(conn, pool, time, as_server_ctx,
                                    as_client_ctx, CA_cert, CA_pkey, pkey_ctx, f, traffic);
             if (res == 0) {
-                printf("Disconnecting: client read\n");
+                if (i == 0) {
+                    printf("FATAL ERROR: LLM disconnected\n");
+                    exit(1);
+                }
+                else printf("Disconnecting: client read\n");
                 vec_swapsplice(traffic, i, 1);
                 disconnect(pool, conn);
                 i--;
@@ -161,7 +165,11 @@ void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx,
         if (FD_ISSET(c_fd, write_fds)) {
             res = Conn_client_write(conn, pool, time);
             if (res == 0) {
-                printf("Disconnecting: client write\n");
+                if (i == 0) {
+                    printf("FATAL ERROR: LLM disconnected\n");
+                    exit(1);
+                }
+                else printf("Disconnecting: client write\n");
                 vec_swapsplice(traffic, i, 1);
                 disconnect(pool, conn);
                 i--;
@@ -277,7 +285,7 @@ int main(int argc, char *argv[]) {
         select(Pool_nfds(pool), Pool_read_fds(pool), Pool_write_fds(pool), NULL, NULL);
 
         read_write_traffic(pool, &traffic, as_server_ctx, as_client_ctx, CA_cert, 
-                           CA_pkey, pkey_ctx, &ts, f, LLM_fd);
+                           CA_pkey, pkey_ctx, &ts, f);
 
         if (FD_ISSET(main_fd, Pool_read_fds(pool))) {
             accept_client(pool, main_fd, &traffic, &ts, &ID);

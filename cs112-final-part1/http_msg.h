@@ -37,6 +37,7 @@ void Http_Msg_p_free(http_message_t **msg);
 Buffer assemble_http_message(const http_message_t *msg);
 void inject_http_header(http_message_t *msg, char *field, char *value);
 bool Http_Msg_has(http_message_t *msg, char *field, char *value);
+char *Http_Msg_get_value(http_message_t *msg, char *field);
 char *get_host_and_port(const http_message_t *msg, int *port);
 http_message_t* Http_Msg_deep_copy(const http_message_t* src);
 void init_parser(llhttp_t *parser, llhttp_settings_t *settings, http_message_t *msg);
