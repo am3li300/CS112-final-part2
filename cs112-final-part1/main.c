@@ -245,7 +245,10 @@ void connect_to_LLM(const char *address, int port, vec_void_t *traffic)
 }
 
 int main(int argc, char *argv[]) {
-    assert(argc == 6);
+    if (argc != 6) {
+        printf("Usage: ./proxy <CA certificate path> <CA pkey path> <LLM IP> <LLM port>");
+        exit(1);
+    }
     unsigned short port = strtol(argv[1], NULL, 10);
     char *CA_cert_path = argv[2];
     char *CA_pkey_path = argv[3];
