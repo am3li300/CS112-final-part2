@@ -1,4 +1,4 @@
-    injection_1 = """
+injection_1 = """
     <!-- INSERTED BY CS112 PROXY -->
 
     <html>
@@ -41,7 +41,7 @@
         <!-- START LLM CONTENT -->
     """
 
-    injection_2 = """
+injection_2 = """
     </div>
         <!-- END LLM CONTENT -->
     <button type="button" class="cs112-toggle-button">Enable CS112 Edits</button>
