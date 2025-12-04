@@ -5,6 +5,8 @@ import socket
 import requests
 from bs4 import BeautifulSoup
 
+import injection
+
 """
 Usage: python llm_server.py <listen_port>
 """
@@ -26,15 +28,25 @@ if __name__ == '__main__':
     # client_sock, client_addr = main_sock.accept()
 
 
+    # TODO get https message from proxy
 
-    resp = requests.get("https://example.com")
-    html = resp.text
-    headers = resp.headers
-    
-    soup = BeautifulSoup(html, "html.parser")
+    def process_response(message):
+        head, CLRF, body = message.partition("\r\n\r\n")
 
-    title_tag = soup.title
-    print(f"Title: {title_tag.string}")
+        if "content-type: text/html" in head.lower():
+            body = inject_html(body)
+
+        return (head + CLRF + body)
+
+    def inject_html(html):
+        html.append(injection_1)
+
+        # TODO get llm response and append to html
+
+        html.append(injection_2)
+
+
+
 
     # while True:
         """
@@ -51,6 +63,10 @@ if __name__ == '__main__':
         PROXY SIDE - need to implement usage of LLM server
             1) every time a server writes to client, send it through the LLM before 
             forwarding
+
+        Proxy
+        - after server read: parse headers, if content type: text/html write to llm server, update status?
+        - 
 
 
         """
