@@ -33,8 +33,7 @@ if __name__ == '__main__':
     def process_response(message):
         head, CLRF, body = message.partition("\r\n\r\n")
 
-        if "content-type: text/html" in head.lower():
-            body = inject_html(body)
+        body = inject_html(body)
 
         return (head + CLRF + body)
 
@@ -52,10 +51,6 @@ if __name__ == '__main__':
         """
         1) do a read, get some response message
         
-        2) parse the response headers - make sure its actually the html file
-
-        3) get the html body 
-
         4) feed html into llm
 
         5) return to proxy
