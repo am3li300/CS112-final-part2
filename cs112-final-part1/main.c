@@ -220,7 +220,7 @@ void check_timeouts(Pool pool, vec_void_t *traffic, struct timespec *ts)
     }
 }
 
-void connect_to_LLM(const char *address, int port, vec_void_t *traffic)
+void connect_to_LLM(const char *address, int port, vec_void_t *traffic, Pool pool)
 {
     struct sockaddr_in saddr;
     struct in_addr ip_addr;
@@ -235,18 +235,19 @@ void connect_to_LLM(const char *address, int port, vec_void_t *traffic)
     memcpy((char *) &saddr.sin_addr.s_addr, h->h_addr_list[0], h->h_length); // copy the address
     saddr.sin_port = htons(port);
 
-    int s_fd = socket(AF_INET, SOCK_STREAM, 0);
-    assert(connect(s_fd, (struct sockaddr *) &saddr, sizeof(saddr)) == 0);
+    int llm_fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(connect(llm_fd, (struct sockaddr *) &saddr, sizeof(saddr)) == 0);
+    Pool_add_read(pool, llm_fd);
 
     printf("Connected to %s on port %d\n", address, port);
 
-    Conn LLM_conn = Conn_new(s_fd, 0, LLM, 0);
+    Conn LLM_conn = Conn_new(llm_fd, 0, LLM, 0);
     vec_push(traffic, LLM_conn);
 }
 
 int main(int argc, char *argv[]) {
     if (argc != 6) {
-        printf("Usage: ./proxy <CA certificate path> <CA pkey path> <LLM IP> <LLM port>");
+        printf("Usage: ./proxy <CA certificate path> <CA pkey path> <LLM IP> <LLM port>\n");
         exit(1);
     }
     unsigned short port = strtol(argv[1], NULL, 10);
@@ -269,7 +270,7 @@ int main(int argc, char *argv[]) {
     vec_void_t traffic;
     vec_init(&traffic);
 
-    connect_to_LLM(LLM_IP, LLM_port, &traffic);
+    connect_to_LLM(LLM_IP, LLM_port, &traffic, pool);
 
     SSL_CTX *as_client_ctx = SSL_CTX_new(TLS_client_method());
     SSL_CTX *as_server_ctx = SSL_CTX_new(TLS_server_method());

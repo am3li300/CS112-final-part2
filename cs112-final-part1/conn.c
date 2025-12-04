@@ -270,6 +270,8 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
                     return PARTIAL; // do not want to return error since we don't want to kick off the LLM connection
                 }
 
+                printf("Pushed LLM Response to client\n");
+
                 Party_push_write(client->client, response);
                 Pool_add_write(pool, Party_get_fd(client->client));
                 return DONE;
@@ -328,6 +330,9 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
 
 int Conn_client_write(Conn conn, Pool pool, unsigned long curr_time)
 {
+    if (conn->type == LLM) {
+        printf("Writing to LLM\n");
+    }
     conn->last_active = curr_time;
     Party client = conn->client;
     Status status = conn->status;
@@ -337,6 +342,9 @@ int Conn_client_write(Conn conn, Pool pool, unsigned long curr_time)
         if (res == ERROR)
             return ERROR;
         else if (res == DONE) {
+            if (conn->type == LLM) {
+                printf("\nWrote complete message to LLM\n\n");
+            }
             Pool_remove_write(pool, Party_get_fd(client));
             if (conn->type == HTTP){
                 printf("HTTP client done\n");
@@ -394,11 +402,30 @@ int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f, Con
             fwrite("\n\n", 1, 2, f);
             fflush(f);
 
-            if (Http_Msg_has(msg, "content-type", "text/html")) {
+            if (Http_Msg_has(msg, "content-type", "text/html") && Http_Msg_has(msg, "Server", "AkamaiNetStorage")) {
+                printf("\nGot response to send to LLM\n\n");
+                char buf[12];
+                snprintf(buf, 12, "%ld", msg->body_len);
+                hijack_http_header(msg, "Transfer-Encoding", "Content-Length", buf);
+                Buffer response = assemble_http_message(msg);
+
+                fwrite("READ FROM SERVER, SENDING TO LLM\n", 1, strlen("READ FROM SERVER, SENDING TO LLM\n"), f);
+                fwrite(Buffer_content(response), 1, Buffer_size(response), f);
+                fwrite("\n\n", 1, 2, f);
+                fflush(f);
+
                 Party_push_write(LLM->client, response);
                 Pool_add_write(pool, Party_get_fd(LLM->client));
+                
             }
             else {
+                Buffer response = assemble_http_message(msg);
+
+                fwrite("READ FROM SERVER\n", 1, strlen("READ FROM SERVER\n"), f);
+                fwrite(Buffer_content(response), 1, Buffer_size(response), f);
+                fwrite("\n\n", 1, 2, f);
+                fflush(f);
+
                 Party_push_write(conn->client, response);
                 Pool_add_write(pool, Party_get_fd(conn->client));
             }

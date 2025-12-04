@@ -4,12 +4,10 @@ import sys
 import socket
 import requests
 from bs4 import BeautifulSoup
+from enum import Enum
 
 from injection import *
 
-"""
-Usage: python llm_server.py <listen_port>
-"""
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("Usage: python llm_server.py <listen_port>")
@@ -29,18 +27,34 @@ if __name__ == '__main__':
     print("Proxy connected")
 
 
-    def process_response(message):
-        head, CLRF, body = message.partition("\r\n\r\n")
+    def modify_header(header, new_len) -> str:
+        content_line = ""
+        for line in header.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                content_line = line
+                break
+        return header.replace(content_line, f"Content-Length: {new_len}")
+        
+
+
+        
+
+    def process_response(header, body):
+        print("in process_response\n")
 
         body = inject_html(body)
+        print("html injected, modifying header")
+        header = modify_header(header, len(body))
 
-        return (head + CLRF + body)
+        print("header modified, finished processing response")
+        return "".join([header, "\r\n\r\n", body])
 
-    def inject_html(html):
-        html.append(injection_1)
+    def inject_html(html) -> str:
+        html += injection_1
 
+        print("generating llm response\n")
         # get llm response and append to html
-        response = client.generate(
+        response = llm.generate(
             model="us.anthropic.claude-3-haiku-20240307-v1:0",
             system="""
             Your task is to highlight and break up the text inside this web page into more readable chunks. 
@@ -55,18 +69,75 @@ if __name__ == '__main__':
             lastk=0
         )
 
-        html.append(response)
+        
+        html += response['result']
+        html += injection_2
 
-        html.append(injection_2)
+        print(html)
+        return html
+
+        
 
 
-    message = ""
-    buf = client_sock.recv(8192)
-    while len(buf) > 0:
-        message += buf.decode('utf-8')
+    def parse_header(header) -> int:
+        for line in header.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                content_length = int(line.split(":")[1].strip())
+                return content_length
+                
+            if line.lower().startswith("transfer-encoding:"):
+                if line.split(":")[1].strip().lower() == "chunked":
+                    return -1
 
-    process_response(message)
-    client_sock.sendall(message)
+
+    header = ""
+    body = ""
+    while True:
+        buf = client_sock.recv(256)
+        print("received some stuff from proxy\n")
+        message = buf.decode('utf-8')
+        header_chunk, CRLF, leftover = message.partition("\r\n\r\n")
+        header += header_chunk
+        if CRLF:
+            print("found end of header")
+            body += leftover
+            print(body)
+            
+            length = parse_header(header)
+            print(length)
+            if (length == -1):
+                # read chunked
+                # split by /r/n, read first substring, translate hex to int, skip forward that many bytes in leftover, if longer than leftover read the rest, if shorter split on new chunk
+                print("chunked encoding currently not handled")
+
+            else: 
+                # read content length
+                bytes_left = length - len(leftover)
+                print(len(leftover))
+                while bytes_left > 0:
+                    print(f"bytes left in body: {bytes_left}")
+                    buf = client_sock.recv(bytes_left)
+                    bytes_left -= len(buf)
+                    body += buf.decode('utf-8')
+                    # print(body)
+                    # bytes_left = length - len(body)
+                    
+            message = process_response(header, body)
+
+            print("processed response, sending result to proxy")
+
+            print(message)
+            client_sock.sendall(message.encode('utf-8'))
+            print("sent result to proxy")
+
+
+                    
+            
+                
+
+
+    # process_response(message)
+    # client_sock.sendall(message)
     
     
 

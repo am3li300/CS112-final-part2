@@ -439,6 +439,16 @@ void inject_http_header(http_message_t *msg, char *field, char *value)
     msg->num_headers++;
 }
 
+void hijack_http_header(http_message_t *msg, char *old_field, char *new_field, char *value)
+{
+    for (int i = 0; i < msg->num_headers; i++) {
+        if (strcasecmp(msg->headers[i].field, old_field) == 0) {
+            memcpy(msg->headers[i].field, new_field, strlen(new_field));
+            memcpy(msg->headers[i].value, value, strlen(value));
+        }
+    }
+}
+
 bool Http_Msg_has(http_message_t *msg, char *field, char *value)
 {
     assert(msg != NULL);
