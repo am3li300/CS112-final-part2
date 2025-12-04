@@ -2,7 +2,8 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
-#include <llhttp.h>
+#include <stdbool.h>
+#include "llhttp.h"
 
 #include "http_msg.h"
 #include "buffer.h"
@@ -420,21 +421,37 @@ Buffer assemble_http_message(const http_message_t *msg)
     return buffer;
 }
 
-void modify_http_message(http_message_t *msg) {
+void inject_http_header(http_message_t *msg, char *field, char *value)
+{
     assert(msg != NULL);
     assert(msg->num_headers < MAX_HEADERS);
 
     header_t *h = &msg->headers[msg->num_headers];
 
     // Field
-    strncpy(h->field, HEADER_INJECTION_FIELD, MAX_HEADER_FIELD - 1);
+    strncpy(h->field, field, MAX_HEADER_FIELD - 1);
     h->field[MAX_HEADER_FIELD - 1] = '\0';
 
     // Value
-    strncpy(h->value, HEADER_INJECTION_VALUE, MAX_HEADER_VALUE - 1);
+    strncpy(h->value, value, MAX_HEADER_VALUE - 1);
     h->value[MAX_HEADER_VALUE - 1] = '\0';
 
     msg->num_headers++;
+}
+
+bool Http_Msg_has(http_message_t *msg, char *field, char *value)
+{
+    assert(msg != NULL);
+    assert(field != NULL);
+    assert(value != NULL);
+
+    for (int i = 0; i < msg->num_headers; i++) {
+        if (strcasecmp(msg->headers[i].field, field) == 0) {
+            return (strstr(msg->headers[i].value, value) != NULL);
+        }
+    }
+
+    return false;
 }
 
 /* caller responsible for freeing hostname */

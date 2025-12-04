@@ -99,7 +99,7 @@ void read_CA_cert(X509 **CA_cert, EVP_PKEY **CA_pkey, char *crt_path, char *key_
     fclose(key);
 }
 
-void accept_client(Pool pool, int main_fd, vec_void_t *traffic, struct timespec *ts)
+void accept_client(Pool pool, int main_fd, vec_void_t *traffic, struct timespec *ts, int *ID)
 {
     struct sockaddr_in c_addr;
     int c_len = sizeof(c_addr);
@@ -110,7 +110,8 @@ void accept_client(Pool pool, int main_fd, vec_void_t *traffic, struct timespec 
 
     Pool_add_read(pool, c_sd);
 
-    Conn new_conn = Conn_new(c_sd, curr_time(ts));
+    Conn new_conn = Conn_new(c_sd, curr_time(ts), HTTP, *ID);
+    (*ID)++;
 
     vec_push(traffic, new_conn);
 }
@@ -132,7 +133,7 @@ void disconnect(Pool pool, Conn conn)
 
 void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx, 
                         SSL_CTX *as_client_ctx, X509 *CA_cert, EVP_PKEY *CA_pkey, 
-                        EVP_PKEY_CTX *pkey_ctx, struct timespec *ts, FILE *f)
+                        EVP_PKEY_CTX *pkey_ctx, struct timespec *ts, FILE *f, int LLM_fd)
 {
     int size = traffic->length;
     fd_set *read_fds = Pool_read_fds(pool);
@@ -147,7 +148,7 @@ void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx,
 
         if (FD_ISSET(c_fd, read_fds)) {
             res = Conn_client_read(conn, pool, time, as_server_ctx,
-                                   as_client_ctx, CA_cert, CA_pkey, pkey_ctx, f);
+                                   as_client_ctx, CA_cert, CA_pkey, pkey_ctx, f, traffic);
             if (res == 0) {
                 printf("Disconnecting: client read\n");
                 vec_swapsplice(traffic, i, 1);
@@ -169,7 +170,7 @@ void read_write_traffic(Pool pool, vec_void_t *traffic, SSL_CTX *as_server_ctx,
             }
         }
         if (FD_ISSET(s_fd, read_fds)) {
-            res = Conn_server_read(conn, pool, time, f);
+            res = Conn_server_read(conn, pool, time, f, traffic->data[0]);
             if (res == 0) {
                 printf("Disconnecting: server read\n");
                 vec_swapsplice(traffic, i, 1);
@@ -197,7 +198,8 @@ void check_timeouts(Pool pool, vec_void_t *traffic, struct timespec *ts)
     int size = traffic->length;
     unsigned long time = curr_time(ts);
 
-    for (int i = 0; i < size; i++) {
+    // never disconnect LLM so start at 1
+    for (int i = 1; i < size; i++) {
         Conn conn = traffic->data[i];
 
         if (time >= Conn_get_last_active(conn) + TIMEOUT) {
@@ -210,14 +212,43 @@ void check_timeouts(Pool pool, vec_void_t *traffic, struct timespec *ts)
     }
 }
 
+void connect_to_LLM(const char *address, int port, vec_void_t *traffic)
+{
+    struct sockaddr_in saddr;
+    struct in_addr ip_addr;
+    struct hostent *h;
+
+    assert(inet_pton(AF_INET, address, &ip_addr) > 0);
+    h = gethostbyaddr(&ip_addr, sizeof(ip_addr), AF_INET);
+    assert(h != NULL);
+    
+    memset(&saddr, '\0', sizeof(saddr));
+    saddr.sin_family = AF_INET;
+    memcpy((char *) &saddr.sin_addr.s_addr, h->h_addr_list[0], h->h_length); // copy the address
+    saddr.sin_port = htons(port);
+
+    int s_fd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(connect(s_fd, (struct sockaddr *) &saddr, sizeof(saddr)) == 0);
+
+    printf("Connected to %s on port %d\n", address, port);
+
+    Conn LLM_conn = Conn_new(s_fd, 0, LLM, 0);
+    vec_push(traffic, LLM_conn);
+}
+
 int main(int argc, char *argv[]) {
-    assert(argc == 4);
+    assert(argc == 6);
     unsigned short port = strtol(argv[1], NULL, 10);
+    char *CA_cert_path = argv[2];
+    char *CA_pkey_path = argv[3];
+    char *LLM_IP = argv[4];
+    int LLM_port = strtol(argv[5], NULL, 10);
+
     int main_fd = set_up_socket(port);
 
     X509 *CA_cert = X509_new();
     EVP_PKEY *CA_pkey = EVP_PKEY_new();
-    read_CA_cert(&CA_cert, &CA_pkey, argv[2], argv[3]);
+    read_CA_cert(&CA_cert, &CA_pkey, CA_cert_path, CA_pkey_path);
     EVP_PKEY_CTX *pkey_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, NULL);
     assert(EVP_PKEY_keygen_init(pkey_ctx) > 0);
 
@@ -227,6 +258,8 @@ int main(int argc, char *argv[]) {
     vec_void_t traffic;
     vec_init(&traffic);
 
+    connect_to_LLM(LLM_IP, LLM_port, &traffic);
+
     SSL_CTX *as_client_ctx = SSL_CTX_new(TLS_client_method());
     SSL_CTX *as_server_ctx = SSL_CTX_new(TLS_server_method());
     assert(as_server_ctx != NULL && as_client_ctx != NULL);
@@ -235,6 +268,8 @@ int main(int argc, char *argv[]) {
     FILE *f = fopen("messagelog.txt", "w");
     assert(f!=NULL);
 
+    int ID = 1;
+
     printf("Set up proxy\n");
 
     while (1) {
@@ -242,10 +277,10 @@ int main(int argc, char *argv[]) {
         select(Pool_nfds(pool), Pool_read_fds(pool), Pool_write_fds(pool), NULL, NULL);
 
         read_write_traffic(pool, &traffic, as_server_ctx, as_client_ctx, CA_cert, 
-                           CA_pkey, pkey_ctx, &ts, f);
+                           CA_pkey, pkey_ctx, &ts, f, LLM_fd);
 
         if (FD_ISSET(main_fd, Pool_read_fds(pool))) {
-            accept_client(pool, main_fd, &traffic, &ts);
+            accept_client(pool, main_fd, &traffic, &ts, &ID);
         }
 
         check_timeouts(pool, &traffic, &ts);

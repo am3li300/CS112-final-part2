@@ -20,6 +20,7 @@
 #include "conn.h"
 #include "party.h"
 #include "http_msg.h"
+#include "vec.h"
 
 #define CERT_TTL 365 // in days
 
@@ -31,6 +32,8 @@
     "X-Proxy:CS112\r\n" \
     "\r\n"
 
+#define ID_FIELD "Client-ID"
+
 typedef enum {
     STANDARD,
     CONNECT,
@@ -39,22 +42,34 @@ typedef enum {
 } Status;
 
 struct Conn {
+    int id;
     Party server;
     Party client;
     Status status;
-    bool http;
+    Type type;
     unsigned long last_active;
+    Party LLM;
 };
 
-Conn Conn_new(int client_fd, unsigned long curr_time)
+/*
+-need to add client id to each connection
+-make the llm a special connection with only client, status standard, type llm
+-llm guaranteed to be connection index 0, so pass it in server_read, after server read done, parse for content-type html, if that exists push write to llm, else, push write to client
+-for conn_read llm, standard, if done and if type == llm, parse client id, find connection in list, push write to them
+-for conn_write llm, just standard
+-lowk pass the vector pointer to conn_read
+*/
+
+Conn Conn_new(int client_fd, unsigned long curr_time, Type type, int id)
 {
     Conn conn = malloc(sizeof(struct Conn));
     assert(conn != NULL);
 
+    conn->id = id;
     conn->client = Party_new(client_fd);
     conn->server = Party_new(-1);
     conn->status = STANDARD;
-    conn->http = true;
+    conn->type = type;
     conn->last_active = curr_time;
 
     return conn;
@@ -163,7 +178,7 @@ void set_up_server(Conn conn, int port, http_message_t *msg, Pool pool, unsigned
     Party_set_fd(conn->server, s_fd);
     Pool_add_read(pool, s_fd);
 
-    if (!conn->http) {
+    if (conn->type == HTTPS) {
         Party server = conn->server;
         Party client = conn->client;
 
@@ -217,7 +232,7 @@ int TLS_handshake(Conn conn, SSL *ssl, int fd, int (*SSL_handshake)(SSL *), Stat
 // 0 for error, > 0 success
 int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time, 
                      SSL_CTX *as_server_ctx, SSL_CTX *as_client_ctx, X509 *CA_cert, 
-                     EVP_PKEY *CA_pkey, EVP_PKEY_CTX *pkey_ctx, FILE *f)
+                     EVP_PKEY *CA_pkey, EVP_PKEY_CTX *pkey_ctx, FILE *f, vec_void_t *traffic)
 {
     conn->last_active = curr_time;
     Party client = conn->client;
@@ -229,7 +244,33 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
             return ERROR;
         else if (res == DONE) {
             http_message_t *msg = Party_get_read(client);
-            if (conn->http && msg->method == HTTP_CONNECT) {
+            if (conn->type == LLM) {
+                Buffer response = assemble_http_message(msg);
+
+                assert(fwrite("READ FROM LLM SERVER\n", 1, strlen("READ FROM LLM SERVER\n"), f) != 0);
+                assert(fwrite(Buffer_content(request), 1, Buffer_size(request), f) != 0);
+                assert(fwrite("\n\n", 1, 2, f) != 0);
+                fflush(f);
+
+                char *id_str = Http_Msg_get_field(msg, ID_FIELD);
+                int id = strtol(id_str, NULL, 10);
+                Conn client = NULL;
+                for (int i = 0; i < traffic->length; i++) {
+                    if (traffic->data[i]->id == id) {
+                        client = traffic->data[i];
+                        break;
+                    }
+                }
+                if (client == NULL) {
+                    printf("Client %d not found\n", id);
+                    return PARTIAL; // do not want to return error since we don't want to kick off the LLM connection
+                }
+
+                Party_push_write(client->client, response);
+                Pool_add_write(pool, Party_get_fd(client->client));
+                return DONE;
+            }
+            else if (conn->type == HTTP && msg->method == HTTP_CONNECT) {
                 Buffer request = assemble_http_message(msg);
                 assert(fwrite("READ CONNECT FROM CLIENT\n", 1, strlen("READ CONNECT FROM CLIENT\n"), f) != 0);
                 assert(fwrite(Buffer_content(request), 1, Buffer_size(request), f) != 0);
@@ -239,7 +280,7 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
 
 
                 conn->status = CONNECT;
-                conn->http = false;
+                conn->type = HTTPS;
                 set_up_server(conn, HTTPS_DEFAULT_PORT, msg, pool, 
                                 curr_time, as_server_ctx, as_client_ctx, 
                                 CA_cert, CA_pkey, pkey_ctx);
@@ -249,7 +290,7 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
                 Pool_add_write(pool, Party_get_fd(client));
                 return DONE;
             }
-            else if (conn->http && msg->method == HTTP_GET) {
+            else if (conn->type == HTTP && msg->method == HTTP_GET) {
                 set_up_server(conn, HTTP_DEFAULT_PORT, msg, pool,
                                 0, NULL, NULL, NULL, NULL, NULL);
             }
@@ -293,7 +334,7 @@ int Conn_client_write(Conn conn, Pool pool, unsigned long curr_time)
             return ERROR;
         else if (res == DONE) {
             Pool_remove_write(pool, Party_get_fd(client));
-            if (conn->http){
+            if (conn->type == HTTP){
                 printf("HTTP client done\n");
                 return ERROR;
             }
@@ -324,7 +365,7 @@ int Conn_client_write(Conn conn, Pool pool, unsigned long curr_time)
     return res;
 }
 
-int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f)
+int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f, Conn LLM)
 {
     conn->last_active = curr_time;
     Party server = conn->server;
@@ -337,7 +378,10 @@ int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f)
             return ERROR;
         else if (res == DONE) {
             http_message_t *msg = Party_get_read(server);
-            modify_http_message(msg);
+            inject_http_header(msg, "X-Proxy", "CS112");
+            char buf[10];
+            inject_http_header(msg, ID_FIELD, snprintf(buf, 10, "%d", conn->id));
+
             Buffer response = assemble_http_message(msg);
 
             fwrite("READ FROM SERVER\n", 1, strlen("READ FROM SERVER\n"), f);
@@ -345,8 +389,15 @@ int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f)
             fwrite("\n\n", 1, 2, f);
             fflush(f);
 
-            Party_push_write(conn->client, response);
-            Pool_add_write(pool, Party_get_fd(conn->client));
+            if (Http_Msg_has(msg, "content-type", "text/html")) {
+                Party_push_write(LLM->client, response);
+                Pool_add_write(pool, Party_get_fd(LLM->client));
+            }
+            else {
+                Party_push_write(conn->client, response);
+                Pool_add_write(pool, Party_get_fd(conn->client));
+            }
+
             return DONE;
         }
     }
