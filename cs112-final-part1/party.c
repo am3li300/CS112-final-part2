@@ -171,7 +171,7 @@ int Party_read(Party party, bool override)
 
     // handle leftovers
     if (err == HPE_CB_MESSAGE_COMPLETE) {
-        printf("Read complete message\n");
+        // printf("Read complete message\n");
         const char *pos = llhttp_get_error_pos(parser_p);
         int leftover_len = (buf + bytes_read) - pos;
         if (leftover_len > 0) {
@@ -249,7 +249,7 @@ int Party_write(Party party, bool override)
     consumed += bytes_written;
     Buffer_set_consumed(curr_write, consumed);
     if (consumed == msg_len) {
-        printf("Wrote complete message\n");
+        // printf("Wrote complete message\n");
         Queue_pop(q);
         if (Queue_empty(q))
             return DONE;

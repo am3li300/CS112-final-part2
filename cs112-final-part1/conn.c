@@ -49,6 +49,7 @@ struct Conn {
     Type type;
     unsigned long last_active;
     Party LLM;
+    bool use_llm;
 };
 
 /*
@@ -71,6 +72,7 @@ Conn Conn_new(int client_fd, unsigned long curr_time, Type type, int id)
     conn->status = STANDARD;
     conn->type = type;
     conn->last_active = curr_time;
+    conn->use_llm = false;
 
     return conn;
 }
@@ -301,6 +303,10 @@ int Conn_client_read(Conn conn, Pool pool, unsigned long curr_time,
                                 0, NULL, NULL, NULL, NULL, NULL);
             }
 
+            char *host = Http_Msg_get_value(msg, "host");
+            if (strcasecmp(host, "www.example.com") == 0 || strcasecmp(host, "arxiv.org") == 0)
+                conn->use_llm = true;
+
             Buffer request = assemble_http_message(msg);
 
 
@@ -402,7 +408,7 @@ int Conn_server_read(Conn conn, Pool pool, unsigned long curr_time, FILE *f, Con
             fwrite("\n\n", 1, 2, f);
             fflush(f);
 
-            if (Http_Msg_has(msg, "content-type", "text/html") && Http_Msg_has(msg, "Server", "AkamaiNetStorage")) {
+            if (msg->status == HTTP_STATUS_OK && Http_Msg_has(msg, "content-type", "text/html") && conn->use_llm) { // && Http_Msg_has(msg, "Server", "AkamaiNetStorage")) {
                 printf("\nGot response to send to LLM\n\n");
                 char buf[12];
                 snprintf(buf, 12, "%ld", msg->body_len);

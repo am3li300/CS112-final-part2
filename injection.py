@@ -44,7 +44,7 @@ injection_1 = """
 injection_2 = """
     </div>
         <!-- END LLM CONTENT -->
-    <button type="button" class="cs112-toggle-button">Enable CS112 Edits</button>
+    <button type='button' class='cs112-toggle-button'>Enable CS112 Edits</button>
 
     <script>
         window.onload = function enableToggleButton() {

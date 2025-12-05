@@ -5,6 +5,8 @@ import socket
 import requests
 from bs4 import BeautifulSoup
 from enum import Enum
+import gzip
+import brotli
 
 from injection import *
 
@@ -12,7 +14,6 @@ if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("Usage: python llm_server.py <listen_port>")
         sys.exit(1)
-    # make this nicer? print an error message with usage?
 
     listen_port = int(sys.argv[1])
 
@@ -26,31 +27,8 @@ if __name__ == '__main__':
     client_sock, client_addr = main_sock.accept()
     print("Proxy connected")
 
-
-    def modify_header(header, new_len) -> str:
-        content_line = ""
-        for line in header.split("\r\n"):
-            if line.lower().startswith("content-length:"):
-                content_line = line
-                break
-        return header.replace(content_line, f"Content-Length: {new_len}")
-        
-
-
-        
-
-    def process_response(header, body):
-        print("in process_response\n")
-
-        body = inject_html(body)
-        print("html injected, modifying header")
-        header = modify_header(header, len(body))
-
-        print("header modified, finished processing response")
-        return "".join([header, "\r\n\r\n", body])
-
-    def inject_html(html) -> str:
-        html += injection_1
+    def inject_html(body_str) -> str:
+        html = body_str + injection_1
 
         print("generating llm response\n")
         # get llm response and append to html
@@ -65,7 +43,7 @@ if __name__ == '__main__':
             Do not respond with anything other than the html.
 
             """,
-            query=body,
+            query= body_str,
             lastk=0
         )
 
@@ -73,12 +51,72 @@ if __name__ == '__main__':
         html += response['result']
         html += injection_2
 
-        print(html)
         return html
+    
+
+    def decompress(header_str, body) -> str:
+        # 1 for gzip, 2 for br
+        encoding_type = ""
+        for line in header_str.split("\r\n"):
+            if line.lower().startswith("content-encoding:"):
+                encoding_type = line.split(":")[1].strip()
+                break
+
+        decompressed = body
+        if encoding_type == "gzip":
+            decompressed = gzip.decompress(body)
+        elif encoding_type == "br":
+            decompressed = brotli.decompress(body)
+
+        return decompressed.decode('utf-8')
+    
+
+    def recompress(header_str, body_str):
+        encoding_type = ""
+        for line in header_str.split("\r\n"):
+            if line.lower().startswith("content-encoding:"):
+                encoding_type = line.split(":")[1].strip()
+                break
+
+        compressed = body_str.encode('utf-8')
+        if encoding_type == "gzip":
+            return gzip.compress(compressed)
+        elif encoding_type == "br":
+            return brotli.compress(compressed)
+        else: return compressed
+    
+
+    def modify_header(header, new_len) -> str:
+        content_line = ""
+        for line in header.split("\r\n"):
+            if line.lower().startswith("content-length:"):
+                content_line = line
+                break
+        return header.replace(content_line, f"Content-Length: {new_len}")
+
+
+    def process_response(header_str, body) -> str:
+        print("in process_response\n")
+
+        body_str = decompress(header_str, body)
+        print("DECOMPRESSED BODY")
+        print(body_str)
+        print()
+
+        body_str = inject_html(body_str)
+        print("MODIFIED BODY")
+        print(body_str)
+        print()
+
+        new_body = recompress(header_str, body_str)
+        header_str = modify_header(header_str, len(new_body))
+        print("UPDATED HEADER")
+        print(header_str)
+        print()
+
+        return b"".join([header_str.encode('utf-8'), b"\r\n\r\n", new_body])
 
         
-
-
     def parse_header(header) -> int:
         for line in header.split("\r\n"):
             if line.lower().startswith("content-length:"):
@@ -90,20 +128,21 @@ if __name__ == '__main__':
                     return -1
 
 
-    header = ""
-    body = ""
+    header = b''
     while True:
         buf = client_sock.recv(256)
-        print("received some stuff from proxy\n")
-        message = buf.decode('utf-8')
-        header_chunk, CRLF, leftover = message.partition("\r\n\r\n")
+        # print("received some stuff from proxy\n")
+        header_chunk, CRLF, leftover = buf.partition(b"\r\n\r\n")
         header += header_chunk
         if CRLF:
-            print("found end of header")
-            body += leftover
-            print(body)
+            body = leftover
             
-            length = parse_header(header)
+            header_str = header.decode('utf-8')
+            print("HEADER")
+            print(header_str)
+            print()
+
+            length = parse_header(header_str)
             print(length)
             if (length == -1):
                 # read chunked
@@ -113,22 +152,20 @@ if __name__ == '__main__':
             else: 
                 # read content length
                 bytes_left = length - len(leftover)
-                print(len(leftover))
+                # print(len(leftover))
                 while bytes_left > 0:
-                    print(f"bytes left in body: {bytes_left}")
                     buf = client_sock.recv(bytes_left)
                     bytes_left -= len(buf)
-                    body += buf.decode('utf-8')
-                    # print(body)
-                    # bytes_left = length - len(body)
-                    
-            message = process_response(header, body)
+                    body += buf
+            
+            message = process_response(header_str, body) # message will be compressed in bytes with content length updated
 
             print("processed response, sending result to proxy")
 
-            print(message)
-            client_sock.sendall(message.encode('utf-8'))
+            # print(message)
+            client_sock.sendall(message)
             print("sent result to proxy")
+            header = b''
 
 
                     

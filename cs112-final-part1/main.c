@@ -86,8 +86,14 @@ void read_CA_cert(X509 **CA_cert, EVP_PKEY **CA_pkey, char *crt_path, char *key_
 {
     FILE *crt = fopen(crt_path, "r");
     FILE *key = fopen(key_path, "r");
-    assert(crt != NULL);
-    assert(key != NULL);
+    if (crt == NULL) {
+        printf("CA certificate path failed: %s\n", crt_path);
+        exit(1);
+    }
+    if (key == NULL) {
+        printf("CA key path failed: %s\n", key_path);
+        exit(1);
+    }
 
     *CA_cert = PEM_read_X509(crt, NULL, NULL, NULL);
     *CA_pkey = PEM_read_PrivateKey(key, NULL, NULL, NULL);
